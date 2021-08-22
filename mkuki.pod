@@ -1,0 +1,112 @@
+=encoding UTF8
+
+=head1 NAME
+
+mkuki - produce, sign, and install a Unified Kernel Image
+
+
+=head1 SYNOPSIS
+
+mkuki [B<-h|--help>] [B<-v|--verbose>] [B<-k|--kernel> F<path>] [B<-K|--kernelname> I<name>] [B<-u|--ucode> F<path>] [B<-i|--initramfs> F<path>] [B<-s|--splash> F<path>] [B<-c|--cmdline> F<path>] [B<--efistub> F<path>] [B<--no-ucode>] [B<--no-splash>] [B<--sign>] [B<--sign-key> F<path>] [B<--sign-cert> F<path>] [B<--output> F<path>] [B<--no-backup>]
+
+
+=head1 DESCRIPTION
+
+B<mkuki> will produce a Unified Kernel Image which can be booted directly by a UEFI-capable device, with no need for an intermediate bootloader.
+
+B<mkuki> can also:
+
+- Determine which kernel you are using
+
+- Determine which initramfs you are using
+
+- Determine which microcode image to include
+
+- Include a splash image
+
+- Sign the UKI using B<sbsign>
+
+- Keep a backup of the previous UKI
+
+- Make a sandwich for you
+
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<-h>, B<--help>
+
+Print help text, then exit.
+
+=item B<-v>, B<--verbose>
+
+Explain what is being done.
+
+=item B<-K>, B<--kernelname> I<name>
+
+The name of the kernel, used to derive other filenames. If omitted, the current kernel will be used.
+
+=item B<-k>, B<--kernel> F<path>
+
+The path to the kernel file. When specifying this option, you must also specify B<--kernelname>. If omitted, F</boot/vmlinuz-$kernelname> will be used.
+
+=item B<-u>, B<--ucode> F<path>
+
+The path to the microcode image. If omitted, B<mkuki> will determine your CPU vendor and locate the right microcode file.
+
+=item B<-i>, B<--initramfs> F<path>
+
+The path to the initramfs image. If omitted, F</boot/initramfs-$kernelname.img> will be used.
+
+=item B<-s>, B<--splash> F<path>
+
+The path to the splash image. Must be a bitmap. If omitted, the one provided by systemd will be used, if it exists; otherwise, a warning will be logged and no splash will be used.
+
+=item B<--no-splash>
+
+Do not use a splash image and silences the warning caused by a missing default splash file.
+
+=item B<-c>, B<--cmdline> F<path>
+
+The path to the file containing the kernel parameters. If omitted, F</etc/kernel/cmdline> will be used, if it exists; otherwise, F</proc/cmdline> will be used.
+
+=item B<--efistub> F<path>
+
+The path to the efistub. If omitted, the one provided by systemd will be used. If it does not exist, the program will fail and you must specify one manually.
+
+=item B<--no-ucode>
+
+Do not add the microcode before the initramfs image. Here be dragons.
+
+=item B<--sign>
+
+Allow the UKI to be used in a Secure Boot-enabled system: sign the resultant UKI using sbsign.
+
+=item B<--sign-key> F<path>
+
+The path to the UEFI signing key. If omitted, F</etc/secureboot/keys/DB.key> will be used.
+
+=item B<--sign-cert> F<path>
+
+The path to the UEFI signing certificate. If omitted, F</etc/secureboot/keys/DB.crt> will be used.
+
+=item B<--output> F<path>
+
+The path to where the UKI will be placed. If omitted, the file will be named F<$distro-$kernel.efi> and will be placed in the current directory. If the file already exists, it will be moved to {,.bak} unless B<--no-backup> is specified.
+
+=item B<--no-backup>
+
+Do not back up the file specified by --output prior to placing the new one there. Here be dragons.
+
+=back
+
+
+=head1 SEE ALSO
+
+B<objcopy>, B<sbsign>
+
+
+=head1 AUTHOR, COPYRIGHT, LICENSE
+
+This program is written by Dirk Kok 2021 and is available under the MIT license.

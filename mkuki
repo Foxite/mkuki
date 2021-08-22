@@ -1,0 +1,370 @@
+#!/bin/sh
+
+die() {
+	echo "$1"
+	rm -rf $tmpdir
+	exit $2
+}
+
+usage() {
+	echo "Usage:"
+	echo "$(basename $0)"
+	echo " -h --help: display this text and exit"
+	echo " -v --verbose: explain what is being done"
+	echo " -k --kernel <path>: use a specific kernel image"
+	echo " -K --kernelname name: kernel name used to derive other variables (ex: linux-lts, linux-hardened)"
+	echo " -u --ucode <path>: use a specific microcode image"
+	echo " -i --initramfs <path>: use a specific initramfs image"
+	echo " -s --splash <path>: use a specific splash image"
+	echo " -c --cmdline <path>: use a specific file containing the kernel parameters"
+	echo "    --efistub <path>: use a specific efistub file"
+	echo "    --no-ucode: do not use microcode"
+	echo "    --no-splash: do not use a splash image"
+	echo "    --sign: sign UKI for secure boot, using keys in /etc/secureboot/keys"
+	echo "    --sign-key: use a different EFI key"
+	echo "    --sign-cert: use a different EFI cert"
+	echo "    --output <path>: save UKI to a specific folder"
+	echo "    --no-backup: do not back up the file specified by --output if it exists"
+	echo "All parameters are optional."
+	echo "If --kernel is not specified, the currently running kernel will be used."
+	echo "If --initramfs is not specified, the default (suffix-less) initramfs for the current kernel will be used."
+	echo "If --cmdline is not specified, /etc/kernel/cmdline will be used if it exists. Otherwise, /proc/cmdline will be used."
+	echo "If --efistub is not specified, the one provided by systemd will be used."
+	echo "If neither --ucode nor --no-ucode is specified, the appropriate ucode for your CPU vendor will be used."
+	echo "If neither --splash nor --no-splash is specified, and systemd is installed, the default splash image for your distro will be used. If systemd is not installed, no splash image will be used."
+	echo "If --output is not specified, a file named \$distro-\$kernel.efi will be created in the current directory."
+	echo "Note that using sudo is not required unless you are setting --output to a restricted folder, or if you're using --sign (in which case, sudo will *hopefully* be required)."
+	echo ""
+	echo "Usage instructions are also available in `man 1 mkuki`."
+}
+
+# arguments
+options=$(getopt -l "help,verbose,kernel:,kernelname:,ucode:,initramfs:,splash:,cmdline:,output:,no-ucode,no-splash,sign,no-backup" -o "hvK:k:u:i:s:c:o:" -a -- "$@")
+if [ ! $? ]
+then
+	usage
+	exit 1
+fi
+eval set -- "$options"
+
+while true
+do
+	case $1 in
+		-h|--help)
+			usage
+			exit 0
+			;;
+		-v|--verbose)
+			verbose=1
+			;;
+		-k|--kernel)
+			shift
+			kernel=$1
+			;;
+		-K|--kernelname)
+			shift
+			kernelname=$1
+			;;
+		-u|--ucode)
+			shift
+			ucode=$1
+			if [ $noucode ]
+			then
+				echo "You have specified both --no-ucode and --ucode, ucode will NOT be added."
+			fi
+			;;
+		-i|--initramfs)
+			shift
+			initramfs=$1
+			;;
+		-s|--splash)
+			shift
+			splash=$1
+			if [ $nosplash ]
+			then
+				echo "You have specified both --no-splash and --splash, splash will NOT be added."
+			fi
+			;;
+		-c|--cmdline)
+			shift
+			cmdline=$1
+			;;
+		--no-ucode)
+			noucode=1
+			if [ $ucode ]
+			then
+				echo "You have specified both --no-ucode and --ucode, ucode will NOT be added."
+			fi
+			;;
+		--no-splash)
+			nosplash=1
+			if [ $splash ]
+			then
+				echo "You have specified both --no-splash and --splash, splash will NOT be added."
+			fi
+			;;
+		--efistub)
+			shift
+			efistub=$1
+			;;
+		--sign)
+			sign=1
+			;;
+		--sign-key)
+			shift
+			signkey=$1
+			;;
+		--sign-cert)
+			shift
+			signcert=$1
+			;;
+		--output)
+			shift
+			output=$1
+			;;
+		--no-backup)
+			install_no_backup=1
+			;;
+		--)
+			shift
+			break
+			;;
+	esac
+	shift || die "Error: argument parse failure (report to developer)" 127
+done
+
+if [ $1 ]
+then
+	echo "Warning: trailing argument is being ignored: $1"
+fi
+
+
+# tmp folder setup
+# I know this is actually the pid of readlink, but that's fine.
+pid=`readlink /proc/self`
+tmpdir=/tmp/mkuki/$pid
+mkdir --mode 1777 -p $tmpdir || die "Error: Could not create temporary folder $tmpdir. This is probably because you have previously run mkuki with root privileges. Manually delete the folder, or run mkuki with root privileges." 126
+
+if [[ ! -z $kernel && -z $kernelname ]]
+then
+	die "Error: You cannot specify either --kernel without specifying --kernelname." 1
+fi
+
+if [ -z $kernelname ]
+then
+	kernelname=`cat /proc/version | awk '{print $4}' | sed -r 's/\(([a-z\-]+?)@.*/\1/'`
+fi
+
+if [ $verbose ]
+then
+	echo "Active kernel is $kernelname"
+fi
+
+# kernel
+if [ -z $kernel ]
+then
+	kernel=/boot/vmlinuz-$kernelname
+
+	if [ $verbose ]
+	then
+		echo "--kernel not specified; using $kernel"
+	fi
+
+	if ! [ -e $kernel ]
+	then
+		echo "Error: Couldn't determine which kernel to use. You appear to be using $kernelname but there is no $kernel."
+		die "Manually specify the *full* path to the kernel file using --kernel." 2
+	elif [ $verbose ]
+	then
+		echo "Active kernel is $kernelname, using kernel file $kernel"
+	fi
+elif ! [ -e $kernel ]
+then
+	die "Error: Kernel $kernel does not exist" 2
+fi
+
+
+# initramfs
+if [ -z $initramfs ]
+then
+	initramfs=/boot/initramfs-$kernelname.img
+	if [ $verbose ]
+	then
+		echo "--initramfs not specified"
+	fi
+
+	if ! [ -e $initramfs ]
+	then
+		echo "Error: Couldn't determine which initramfs file to use. Your kernel appears to be $kernelname but there is no $initramfs."
+		die "Manually specify the *full* path to the initramfs file to use using --initramfs." 3
+	fi
+elif ! [ -e $initramfs ]
+then
+	die "Error: initramfs $initramfs does not exist" 3
+fi
+if [ $verbose ]
+then
+	echo "Using initramfs $initramfs"
+fi
+
+
+# splash
+if [ $nosplash ]
+then
+	splash=/dev/null
+else
+	if [ -z $splash ]
+	then
+		splash=/usr/share/systemd/bootctl/splash-arch.bmp
+		if ! [ -e $splash ]
+		then
+			echo "The default splash file $splash does not exist. Not using a splash file."
+			echo "Manually specify a bmp file to use as the splash image using --splash, or silence this warning by using --no-splash."
+			splash=/dev/null
+		fi
+	elif ! [ -e $splash ]
+	then
+		die "Error: Splash $splash does not exist" 4
+	fi
+fi
+
+
+# ucode
+if [ $noucode ]
+then
+	if [ $verbose ]
+	then
+		echo "Not using ucode"
+	fi
+	unset ucode
+elif [ -z $ucode ]
+then
+	if [ $verbose ]
+	then
+		echo "--ucode not specified; determining CPU vendor"
+	fi
+
+	cpu_vendor=`cat /proc/cpuinfo | grep "vendor_id" | head -n 1 | awk '{print $3}'`
+	case $cpu_vendor in
+		AuthenticAMD)
+			ucode=/boot/amd-ucode.img
+			;;
+		GenuineIntel)
+			ucode=/boot/intel-ucode.img
+			;;
+	esac
+
+	if [[ -z $ucode || ! -e $ucode ]]
+	then
+		echo -n "Error: Couldn't determine the ucode file to use. "
+		if [ -z $ucode ]
+		then
+			echo "Your cpu vendor $cpu_vendor is not recognized."
+		else
+			echo "The ucode file for the recognized vendor is not present."
+		fi
+		die "Manually specify the *full* path to the ucode file using --ucode, or skip adding ucode using --no-ucode." 5
+	elif [ $verbose ]
+	then
+		echo "CPU vendor is $cpu_vendor, using ucode $ucode"
+	fi
+elif ! [ -e $ucode ]
+then
+	die "Error: ucode $ucode does not exist" 5
+elif [ $verbose ]
+then
+	echo "Using ucode $ucode"
+fi
+
+if [ -z $cmdline ]
+then
+	cmdline=/etc/kernel/cmdline
+
+	if ! [ -e $cmdline ]
+	then
+		cmdline=/proc/cmdline
+	fi
+fi
+
+# Combine ucode with initramfs
+if ! [ $noucode ]
+then
+	initrd=$tmpdir/initrd.img
+
+	if [ $verbose ]
+	then
+		echo "cat ucode initramfs"
+	fi
+
+	cat $ucode $initramfs > $initrd
+else
+	initrd=$initramfs
+fi
+
+
+# Output
+if [ -z $output ]
+then
+	# https://stackoverflow.com/a/35297022
+	output="$(cat /etc/os-release | sed -n 's/^ID=\(.*\)/\1/p')-$kernelname.efi"
+fi
+
+
+# efistub
+if [ -z $efistub ]
+then
+	efistub="/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+fi
+
+osrel="/usr/lib/os-release"
+
+if [ $verbose ]
+then
+	echo "objcopy all parts together"
+fi
+
+tmp_efi_location=$tmpdir/arch-$kernelname.efi
+
+objcopy \
+    --add-section   .osrel=$osrel   --change-section-vma   .osrel=0x0020000 \
+    --add-section .cmdline=$cmdline --change-section-vma .cmdline=0x0030000 \
+    --add-section  .splash=$splash  --change-section-vma  .splash=0x0040000 \
+    --add-section   .linux=$kernel  --change-section-vma   .linux=0x2000000 \
+    --add-section  .initrd=$initrd  --change-section-vma  .initrd=0x3000000 \
+    $efistub $tmp_efi_location || die "Error: objcopy failed with exit code $?" 6
+
+if [ $sign ]
+then
+	if [ $verbose ]
+	then
+		echo "sbsign UKI using keys in /etc/secureboot"
+	fi
+	if [ -z $signkey ]
+	then
+		signkey=/etc/secureboot/keys/DB.key
+		if [ $verbose ]
+		then
+			echo "signkey=$signkey"
+		fi
+	fi
+	if [ -z $signcert ]
+	then
+		signcert=/etc/secureboot/keys/DB.crt
+		if [ $verbose ]
+		then
+			echo "signcert=$signcert"
+		fi
+	fi
+	sbsign --key $signkey --cert $signcert $tmp_efi_location --output $tmp_efi_location.signed || die "Error: sbsign failed with exit code $?" 7
+	tmp_efi_location=$tmp_efi_location.signed
+	chmod +x $tmp_efi_location
+fi
+
+if [[ ! $install_no_backup && -e $output ]]
+then
+    mv $output{,.bak} || die "Error: could not backup output file" 8
+fi
+
+cp $tmp_efi_location $output || die "Error: could not copy efi file to output" 9
+
+die "OK" 0
