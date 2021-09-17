@@ -35,7 +35,7 @@ usage() {
 	echo "If --output is not specified, a file named \$distro-\$kernel.efi will be created in the current directory."
 	echo "Note that using sudo is not required unless you are setting --output to a restricted folder, or if you're using --sign (in which case, sudo will *hopefully* be required)."
 	echo ""
-	echo "Usage instructions are also available in `man 1 mkuki`."
+	echo "Usage instructions are also available in mkuki's man page."
 }
 
 # arguments
