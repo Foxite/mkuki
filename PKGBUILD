@@ -10,7 +10,7 @@ changelog=CHANGELOG
 source=("$pkgname-$pkgver.tar.gz::https://github.com/Foxite/mkuki/releases/download/v$pkgver/v$pkgver.tar.gz"
 		"$pkgname-$pkgver.tar.gz.gpg::https://github.com/Foxite/mkuki/releases/download/v$pkgver/v$pkgver.tar.gz.gpg"
 		'LICENSE')
-depends=('binutils')
+depends=('binutils' 'sed' 'awk' 'coreutils' 'util-linux')
 makedepends=('perl')
 optdepends=('sbsigntools: for signing EFI images')
 md5sums=('2288302db03e8f002c7e31d53cd5b3ec'
