@@ -1,3 +1,6 @@
+# Deprecated
+This package is no longer actively maintained. Use this instead: https://github.com/andreyv/sbupdate
+
 # mkuki
 Build and sign a unified kernel image
 
